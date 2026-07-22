@@ -1,0 +1,54 @@
+---
+fetch_datadog_logs:
+  description: |-
+    Use the Datadog Logs API to fetch application logs matching the query: {datadog_query} over the time range: {time_range}.
+
+    Construct the API request to the Datadog logs search endpoint:
+    - URL: https://api.{DD_SITE}/api/v2/logs/events/search
+    - Use DD_API_KEY and DD_APP_KEY for authentication headers (DD-API-KEY and DD-APPLICATION-KEY).
+    - Submit a POST request with the query and time range as body parameters.
+    - Return the full raw log data including timestamps, log levels, messages, service names, and any stack traces.
+  expected_output: Raw log data retrieved from Datadog in JSON or structured text
+    format, including log entries with timestamps, severity levels, service names,
+    log messages, and any associated error details or stack traces.
+  agent: datadog_log_retrieval_specialist
+analyze_application_logs:
+  description: |-
+    Analyze the raw log data fetched from Datadog. Your analysis should:
+    - Identify and categorize critical errors and exceptions
+    - Highlight warnings and anomalies
+    - Detect recurring error patterns or spikes
+    - Note any stack traces or root cause indicators
+    - Summarize error frequency and affected services
+    - Identify any trends over the time range {time_range}
+  expected_output: 'A structured log analysis including: list of critical errors with
+    counts and timestamps, warnings summary, anomalies detected, recurring patterns,
+    affected services, and preliminary root cause hypotheses.'
+  agent: application_error_analysis_expert
+  context:
+  - fetch_datadog_logs
+generate_log_report:
+  description: |-
+    Using the structured log analysis, generate a comprehensive and readable markdown report for the engineering team. The report must include:
+    1. **Executive Summary** — brief overview of the monitoring period and key findings
+    2. **Critical Errors** — detailed list with timestamps, frequency, and affected services
+    3. **Warnings & Anomalies** — notable non-critical issues
+    4. **Trends** — patterns observed over the {time_range} period
+    5. **Recommendations** — actionable next steps for the engineering team
+    6. **Appendix** — raw error samples if relevant
+  expected_output: 'A complete, well-formatted markdown report covering all sections:
+    executive summary, critical errors, warnings, trends, recommendations, and optional
+    appendix with log samples.'
+  agent: technical_report_writer
+  context:
+  - analyze_application_logs
+send_report_via_email:
+  description: "Send the generated log analysis report to {recipient_email} via Microsoft
+    Outlook. \n- Use a clear subject line such as: \"Application Log Monitoring Report
+    — {time_range}\"\n- Include the full markdown report as the email body (formatted
+    as HTML if possible)\n- Ensure the email is sent successfully and confirm delivery."
+  expected_output: Confirmation that the email with the log monitoring report was
+    successfully sent to {recipient_email} via Microsoft Outlook.
+  agent: notification_dispatcher
+  context:
+  - generate_log_report
