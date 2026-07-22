@@ -57,6 +57,7 @@ def test():
         'DD_SITE': 'sample_value'
     }
     try:
+        # pyrefly: ignore [unexpected-keyword]
         DatadogLogMonitorReporterCrew().crew().test(n_iterations=int(sys.argv[1]), openai_model_name=sys.argv[2], inputs=inputs)
 
     except Exception as e:
