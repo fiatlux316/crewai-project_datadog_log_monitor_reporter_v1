@@ -1,18 +1,325 @@
-from crewai.tools import BaseTool
+import os
+import re
+import json
+from datetime import datetime, timedelta, timezone
 from typing import Type
+
+import requests
+from crewai.tools import BaseTool
 from pydantic import BaseModel, Field
 
 
-class MyCustomToolInput(BaseModel):
-    """Input schema for MyCustomTool."""
-    argument: str = Field(..., description="Description of the argument.")
+def _parse_time_range(time_range: str) -> tuple[str, str]:
+    """Parse a human-readable time range into ISO 8601 from/to timestamps."""
+    now = datetime.now(timezone.utc)
+    time_range_lower = time_range.lower().strip()
 
-class MyCustomTool(BaseTool):
-    name: str = "Name of my tool"
-    description: str = (
-        "Clear description for what this tool is useful for, your agent will need this information to use it."
+    # Parse patterns like "last 1 hour", "last 30 minutes", "last 7 days"
+    match = re.match(
+        r"last\s+(\d+)\s+(minute|minutes|hour|hours|day|days|week|weeks)",
+        time_range_lower,
     )
-    args_schema: Type[BaseModel] = MyCustomToolInput
 
-    def _run(self, argument: str) -> str:
-        return "this is an example of a tool output, ignore it and move along."
+    if match:
+        amount = int(match.group(1))
+        unit = match.group(2).rstrip("s")  # normalize to singular
+
+        if unit == "minute":
+            delta = timedelta(minutes=amount)
+        elif unit == "hour":
+            delta = timedelta(hours=amount)
+        elif unit == "day":
+            delta = timedelta(days=amount)
+        elif unit == "week":
+            delta = timedelta(weeks=amount)
+        else:
+            delta = timedelta(hours=1)
+
+        from_time = (now - delta).isoformat()
+        to_time = now.isoformat()
+    else:
+        # Default: last 1 hour
+        from_time = (now - timedelta(hours=1)).isoformat()
+        to_time = now.isoformat()
+
+    return from_time, to_time
+
+
+class DatadogLogsSearchInput(BaseModel):
+    """Input schema for DatadogLogsSearchTool."""
+    query: str = Field(
+        ...,
+        description=(
+            "Datadog log search query string. "
+            "Examples: 'service:my-service status:error', "
+            "'service:my-service @http.status_code:[500 TO 599]'"
+        ),
+    )
+    time_range: str = Field(
+        default="last 1 hour",
+        description=(
+            "Human-readable time range such as 'last 1 hour', 'last 30 minutes', "
+            "'last 24 hours', 'last 7 days'. Defaults to 'last 1 hour'."
+        ),
+    )
+    limit: int = Field(
+        default=100,
+        description="Maximum number of log entries to return (max 1000).",
+    )
+
+
+class DatadogLogsSearchTool(BaseTool):
+    name: str = "Datadog Logs Search"
+    description: str = (
+        "Search and retrieve application logs from Datadog using the Logs API v2. "
+        "Requires DD_API_KEY, DD_APP_KEY, and DD_SITE environment variables. "
+        "Use this tool to fetch error logs, application logs, and stack traces "
+        "from Datadog Log Management."
+    )
+    args_schema: Type[BaseModel] = DatadogLogsSearchInput
+
+    def _run(self, query: str, time_range: str = "last 1 hour", limit: int = 100) -> str:
+        # Read credentials from environment
+        api_key = os.environ.get("DD_API_KEY")
+        app_key = os.environ.get("DD_APP_KEY")
+        dd_site = os.environ.get("DD_SITE", "datadoghq.com")
+
+        if not api_key or not app_key:
+            return (
+                "ERROR: DD_API_KEY and DD_APP_KEY environment variables must be set. "
+                "Please configure them in your .env file."
+            )
+
+        # Parse the human-readable time range into ISO 8601 timestamps
+        from_time, to_time = _parse_time_range(time_range)
+
+        # Build the API request
+        url = f"https://api.{dd_site}/api/v2/logs/events/search"
+        headers = {
+            "Content-Type": "application/json",
+            "DD-API-KEY": api_key,
+            "DD-APPLICATION-KEY": app_key,
+        }
+        body = {
+            "filter": {
+                "query": query,
+                "from": from_time,
+                "to": to_time,
+            },
+            "sort": "-timestamp",
+            "page": {
+                "limit": min(limit, 1000),
+            },
+        }
+
+        try:
+            response = requests.post(url, headers=headers, json=body, timeout=30)
+            response.raise_for_status()
+        except requests.exceptions.HTTPError as e:
+            return (
+                f"ERROR: Datadog API returned HTTP {response.status_code}. "
+                f"Response: {response.text[:500]}"
+            )
+        except requests.exceptions.RequestException as e:
+            return f"ERROR: Failed to connect to Datadog API: {str(e)}"
+
+        data = response.json()
+        logs = data.get("data", [])
+
+        if not logs:
+            return (
+                f"No logs found for query '{query}' in the time range '{time_range}' "
+                f"({from_time} to {to_time})."
+            )
+
+        # Format the results
+        results = []
+        results.append(f"=== Datadog Logs Search Results ===")
+        results.append(f"Query: {query}")
+        results.append(f"Time Range: {from_time} to {to_time}")
+        results.append(f"Total Logs Retrieved: {len(logs)}")
+        results.append(f"{'=' * 50}\n")
+
+        for i, log_entry in enumerate(logs, 1):
+            attrs = log_entry.get("attributes", {})
+            log_attrs = attrs.get("attributes", {})
+            http_info = log_attrs.get("http", {})
+            error_info = log_attrs.get("error", {})
+
+            results.append(f"--- Log Entry #{i} ---")
+            results.append(f"  Timestamp: {attrs.get('timestamp', 'N/A')}")
+            results.append(f"  Status:    {attrs.get('status', 'N/A')}")
+            results.append(f"  Service:   {attrs.get('service', 'N/A')}")
+            results.append(f"  Host:      {attrs.get('host', 'N/A')}")
+
+            # Message
+            message = attrs.get("message", "")
+            if message:
+                # Truncate very long messages
+                if len(message) > 1000:
+                    message = message[:1000] + "... [truncated]"
+                results.append(f"  Message:   {message}")
+
+            # HTTP info
+            if http_info:
+                results.append(f"  HTTP Method:      {http_info.get('method', 'N/A')}")
+                results.append(f"  HTTP URL:         {http_info.get('url', 'N/A')}")
+                results.append(f"  HTTP Status Code: {http_info.get('status_code', 'N/A')}")
+
+            # Error info
+            if error_info:
+                results.append(f"  Error Type:    {error_info.get('kind', error_info.get('type', 'N/A'))}")
+                results.append(f"  Error Message: {error_info.get('message', 'N/A')}")
+                stack = error_info.get("stack", "")
+                if stack:
+                    if len(stack) > 2000:
+                        stack = stack[:2000] + "\n  ... [stack trace truncated]"
+                    results.append(f"  Stack Trace:\n{stack}")
+
+            # Tags
+            tags = attrs.get("tags", [])
+            if tags:
+                results.append(f"  Tags: {', '.join(tags[:20])}")
+
+            results.append("")
+
+        # Pagination info
+        page_after = data.get("meta", {}).get("page", {}).get("after")
+        if page_after:
+            results.append(
+                f"NOTE: More logs are available. "
+                f"Use pagination cursor to fetch the next page."
+            )
+
+        return "\n".join(results)
+
+class DatadogAPMTracesSearchTool(BaseTool):
+    name: str = "Datadog APM Traces Search"
+    description: str = (
+        "Search and retrieve application APM traces from Datadog using the APM Traces API v2. "
+        "Requires DD_API_KEY, DD_APP_KEY, and DD_SITE environment variables. "
+        "Use this tool to fetch error logs, application logs, and stack traces "
+        "from Datadog Log Management."
+    )
+    args_schema: Type[BaseModel] = DatadogLogsSearchInput
+
+    def _run(self, query: str, time_range: str = "last 1 hour", limit: int = 100) -> str:
+        # Read credentials from environment
+        api_key = os.environ.get("DD_API_KEY")
+        app_key = os.environ.get("DD_APP_KEY")
+        dd_site = os.environ.get("DD_SITE", "datadoghq.com")
+
+        if not api_key or not app_key:
+            return (
+                "ERROR: DD_API_KEY and DD_APP_KEY environment variables must be set. "
+                "Please configure them in your .env file."
+            )
+
+        # Parse the human-readable time range into ISO 8601 timestamps
+        from_time, to_time = _parse_time_range(time_range)
+
+        # Build the API request
+        url = f"https://api.{dd_site}/api/v2/spans/events/search"
+        headers = {
+            "Content-Type": "application/json",
+            "DD-API-KEY": api_key,
+            "DD-APPLICATION-KEY": app_key,
+        }
+        body = {
+            "data": {
+                "type": "search_request",
+                "attributes": {
+                    "filter": {
+                        "query": query,
+                        "from": from_time,
+                        "to": to_time,
+                    },
+                    "sort": "-timestamp",
+                    "page": {
+                        "limit": min(limit, 1000),
+                    },
+                },
+            },
+        }
+
+        try:
+            response = requests.post(url, headers=headers, json=body, timeout=30)
+            response.raise_for_status()
+        except requests.exceptions.HTTPError as e:
+            return (
+                f"ERROR: Datadog API returned HTTP {response.status_code}. "
+                f"Response: {response.text[:500]}"
+            )
+        except requests.exceptions.RequestException as e:
+            return f"ERROR: Failed to connect to Datadog API: {str(e)}"
+
+        data = response.json()
+        logs = data.get("data", [])
+
+        if not logs:
+            return (
+                f"No logs found for query '{query}' in the time range '{time_range}' "
+                f"({from_time} to {to_time})."
+            )
+
+        # Format the results
+        results = []
+        results.append(f"=== Datadog Logs Search Results ===")
+        results.append(f"Query: {query}")
+        results.append(f"Time Range: {from_time} to {to_time}")
+        results.append(f"Total Logs Retrieved: {len(logs)}")
+        results.append(f"{'=' * 50}\n")
+
+        for i, log_entry in enumerate(logs, 1):
+            attrs = log_entry.get("attributes", {})
+            log_attrs = attrs.get("attributes", {})
+            http_info = log_attrs.get("http", {})
+            error_info = log_attrs.get("error", {})
+
+            results.append(f"--- Log Entry #{i} ---")
+            results.append(f"  Timestamp: {attrs.get('timestamp', 'N/A')}")
+            results.append(f"  Status:    {attrs.get('status', 'N/A')}")
+            results.append(f"  Service:   {attrs.get('service', 'N/A')}")
+            results.append(f"  Host:      {attrs.get('host', 'N/A')}")
+
+            # Message
+            message = attrs.get("message", "")
+            if message:
+                # Truncate very long messages
+                if len(message) > 1000:
+                    message = message[:1000] + "... [truncated]"
+                results.append(f"  Message:   {message}")
+
+            # HTTP info
+            if http_info:
+                results.append(f"  HTTP Method:      {http_info.get('method', 'N/A')}")
+                results.append(f"  HTTP URL:         {http_info.get('url', 'N/A')}")
+                results.append(f"  HTTP Status Code: {http_info.get('status_code', 'N/A')}")
+
+            # Error info
+            if error_info:
+                results.append(f"  Error Type:    {error_info.get('kind', error_info.get('type', 'N/A'))}")
+                results.append(f"  Error Message: {error_info.get('message', 'N/A')}")
+                stack = error_info.get("stack", "")
+                if stack:
+                    if len(stack) > 2000:
+                        stack = stack[:2000] + "\n  ... [stack trace truncated]"
+                    results.append(f"  Stack Trace:\n{stack}")
+
+            # Tags
+            tags = attrs.get("tags", [])
+            if tags:
+                results.append(f"  Tags: {', '.join(tags[:20])}")
+
+            results.append("")
+
+        # Pagination info
+        page_after = data.get("meta", {}).get("page", {}).get("after")
+        if page_after:
+            results.append(
+                f"NOTE: More logs are available. "
+                f"Use pagination cursor to fetch the next page."
+            )
+
+        return "\n".join(results)
+

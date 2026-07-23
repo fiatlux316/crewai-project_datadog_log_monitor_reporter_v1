@@ -1,52 +1,6 @@
 {
     "type": "object",
-    "properties": {
-        "application_errors": {
-            "type": "array",
-            "description": "List of application errors with error message and timestamp",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "error_message": {
-                        "type": "string",
-                        "description": "Error message"
-                    },
-                    "timestamp": {
-                        "type": "string",
-                        "description": "Timestamp of the error"
-                    }
-                },
-                "required": [
-                    "error_message",
-                    "timestamp"
-                ]
-            }
-        },
-        "application_info": {
-            "type": "array",
-            "description": "List of application information messages with message and timestamp",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "message": {
-                        "type": "string",
-                        "description": "Information message"
-                    },
-                    "timestamp": {
-                        "type": "string",
-                        "description": "Timestamp of the information message"
-                    }
-                },
-                "required": [
-                    "message",
-                    "timestamp"
-                ]
-            }
-        }
-    },
-    "required": [
-        "application_errors",
-        "application_info"
-    ],
-    "title": "ResponseFormat"
+    "title": "ResponseFormat",
+    "required": [],
+    "properties": {}
 }

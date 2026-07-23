@@ -4,9 +4,7 @@ import json
 from crewai import LLM
 from crewai import Agent, Crew, Process, Task
 from crewai.project import CrewBase, agent, crew, task
-from crewai_tools import (
-	ScrapeWebsiteTool
-)
+from .tools.custom_tool import DatadogLogsSearchTool, DatadogAPMTracesSearchTool
 
 
 from pydantic import BaseModel
@@ -22,26 +20,19 @@ class DatadogLogMonitorReporterCrew:
     @agent
     def datadog_log_retrieval_specialist(self) -> Agent:
         
-        
         return Agent(
             config=self.agents_config["datadog_log_retrieval_specialist"],
-            
-            
-            tools=[				ScrapeWebsiteTool()],
-            
+            #tools=[DatadogLogsSearchTool()],
+            tools=[DatadogAPMTracesSearchTool()],
             reasoning=False,
             max_reasoning_attempts=None,
             inject_date=True,
             allow_delegation=False,
             max_iter=25,
             max_rpm=None,
-            
-            
             max_execution_time=None,
             # llm=LLM(
-            #     model="bedrock/claude-sonnet-4-5-20250929-v1:0",
-                
-                
+            #     model="bedrock/claude-sonnet-4-5-20250929-v1:0",    
             # ),
             llm=llm,
             response_format=self._load_response_format("datadog_log_retrieval_specialist"),
@@ -50,92 +41,61 @@ class DatadogLogMonitorReporterCrew:
     
     @agent
     def application_error_analysis_expert(self) -> Agent:
-        
-        
         return Agent(
             config=self.agents_config["application_error_analysis_expert"],
-            
-            
             tools=[],
-            
             reasoning=False,
             max_reasoning_attempts=None,
             inject_date=True,
             allow_delegation=False,
             max_iter=25,
             max_rpm=None,
-            
-            
             max_execution_time=None,
             # llm=LLM(
-            #     model="bedrock/claude-sonnet-4-5-20250929-v1:0",
-                
-                
+            #     model="bedrock/claude-sonnet-4-5-20250929-v1:0",    
             # ),
             llm=llm
-            
         )
         
     
     @agent
     def technical_report_writer(self) -> Agent:
-        
-        
         return Agent(
             config=self.agents_config["technical_report_writer"],
-            
-            
             tools=[],
-            
             reasoning=False,
             max_reasoning_attempts=None,
             inject_date=True,
             allow_delegation=False,
             max_iter=25,
             max_rpm=None,
-            
-            
             max_execution_time=None,
             # llm=LLM(
             #     model="bedrock/claude-sonnet-4-5-20250929-v1:0",
-                
-                
             # ),
-            llm=llm,
-            
+            llm=llm,    
         )
         
     
     @agent
     def notification_dispatcher(self) -> Agent:
-        
-        
         return Agent(
             config=self.agents_config["notification_dispatcher"],
-            
-            
             tools=[],
-            
             reasoning=False,
             max_reasoning_attempts=None,
             inject_date=True,
             allow_delegation=False,
             max_iter=25,
             max_rpm=None,
-            
             apps=[
                     "microsoft_outlook/send_email",
                     ],
-            
-            
             max_execution_time=None,
             # llm=LLM(
-            #     model="bedrock/claude-sonnet-4-5-20250929-v1:0",
-                
-                
+            #     model="bedrock/claude-sonnet-4-5-20250929-v1:0",    
             # ),
             llm=llm,
-            
         )
         
     
@@ -146,17 +106,13 @@ class DatadogLogMonitorReporterCrew:
         return Task(
             config=self.tasks_config["fetch_datadog_logs"],
             markdown=False,
-            
-            
         )
     
     @task
     def analyze_application_logs(self) -> Task:
         return Task(
             config=self.tasks_config["analyze_application_logs"],
-            markdown=False,
-            
-            
+            markdown=False,    
         )
     
     @task
@@ -164,17 +120,13 @@ class DatadogLogMonitorReporterCrew:
         return Task(
             config=self.tasks_config["generate_log_report"],
             markdown=False,
-            
-            
         )
     
     @task
     def send_report_via_email(self) -> Task:
         return Task(
             config=self.tasks_config["send_report_via_email"],
-            markdown=False,
-            
-            
+            markdown=False,    
         )
     
 
