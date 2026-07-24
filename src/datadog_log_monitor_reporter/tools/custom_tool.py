@@ -45,6 +45,21 @@ def _parse_time_range(time_range: str) -> tuple[str, str]:
     return from_time, to_time
 
 
+def _datadog_http_error_message(response: requests.Response) -> str:
+    if response is not None and response.status_code == 401:
+        return (
+            "ERROR: Datadog API returned HTTP 401 Unauthorized. "
+            "This usually means DD_API_KEY or DD_APP_KEY is invalid, expired, or does not have permission. "
+            "Also verify DD_SITE matches your Datadog region (for example datadoghq.com or datadoghq.eu). "
+            f"Response: {response.text[:500]}"
+        )
+
+    return (
+        f"ERROR: Datadog API returned HTTP {response.status_code}. "
+        f"Response: {response.text[:500]}"
+    )
+
+
 class DatadogLogsSearchInput(BaseModel):
     """Input schema for DatadogLogsSearchTool."""
     query: str = Field(
@@ -63,8 +78,8 @@ class DatadogLogsSearchInput(BaseModel):
         ),
     )
     limit: int = Field(
-        default=100,
-        description="Maximum number of log entries to return (max 1000).",
+        default=10,
+        description="Maximum number of log entries to return.",
     )
 
 
@@ -78,11 +93,14 @@ class DatadogLogsSearchTool(BaseTool):
     )
     args_schema: Type[BaseModel] = DatadogLogsSearchInput
 
-    def _run(self, query: str, time_range: str = "last 1 hour", limit: int = 100) -> str:
+    def _run(self, query: str, time_range: str, limit: int = 10) -> str:
         # Read credentials from environment
         api_key = os.environ.get("DD_API_KEY")
         app_key = os.environ.get("DD_APP_KEY")
         dd_site = os.environ.get("DD_SITE", "datadoghq.com")
+        print(f"DEBUG: Using DD_SITE={dd_site}")
+        print(f"DEBUG: Using DD_API_KEY={api_key}")
+        print(f"DEBUG: Using DD_APP_KEY={app_key}")
 
         if not api_key or not app_key:
             return (
@@ -116,15 +134,19 @@ class DatadogLogsSearchTool(BaseTool):
             response = requests.post(url, headers=headers, json=body, timeout=30)
             response.raise_for_status()
         except requests.exceptions.HTTPError as e:
-            return (
-                f"ERROR: Datadog API returned HTTP {response.status_code}. "
-                f"Response: {response.text[:500]}"
-            )
+            return _datadog_http_error_message(e.response)
         except requests.exceptions.RequestException as e:
             return f"ERROR: Failed to connect to Datadog API: {str(e)}"
 
         data = response.json()
         logs = data.get("data", [])
+
+        if not isinstance(logs, list):
+            return (
+                "ERROR: Unexpected Datadog response format. "
+                f"Expected a list under 'data', got {type(logs).__name__}. "
+                f"Response: {json.dumps(data)[:500]}"
+            )
 
         if not logs:
             return (
@@ -141,8 +163,10 @@ class DatadogLogsSearchTool(BaseTool):
         results.append(f"{'=' * 50}\n")
 
         for i, log_entry in enumerate(logs, 1):
-            attrs = log_entry.get("attributes", {})
-            log_attrs = attrs.get("attributes", {})
+            if not isinstance(log_entry, dict):
+                continue
+            attrs = log_entry.get("attributes") or {}
+            log_attrs = (attrs.get("attributes") or {}) if isinstance(attrs, dict) else {}
             http_info = log_attrs.get("http", {})
             error_info = log_attrs.get("error", {})
 
@@ -203,11 +227,14 @@ class DatadogAPMTracesSearchTool(BaseTool):
     )
     args_schema: Type[BaseModel] = DatadogLogsSearchInput
 
-    def _run(self, query: str, time_range: str = "last 1 hour", limit: int = 100) -> str:
+    def _run(self, query: str, time_range: str, limit: int = 10) -> str:
         # Read credentials from environment
         api_key = os.environ.get("DD_API_KEY")
         app_key = os.environ.get("DD_APP_KEY")
         dd_site = os.environ.get("DD_SITE", "datadoghq.com")
+        print(f"DEBUG: Using DD_SITE={dd_site}")
+        print(f"DEBUG: Using DD_API_KEY={api_key}")
+        print(f"DEBUG: Using DD_APP_KEY={app_key}")
 
         if not api_key or not app_key:
             return (
@@ -216,7 +243,12 @@ class DatadogAPMTracesSearchTool(BaseTool):
             )
 
         # Parse the human-readable time range into ISO 8601 timestamps
+        print(f"DEBUG: Parsing time range: {time_range}")
+        print(f"DEBUG: query: {query}")
+        print(f"DEBUG: limit: {limit}")
+
         from_time, to_time = _parse_time_range(time_range)
+        print(f"DEBUG: Parsed time range: from_time={from_time}, to_time={to_time}")
 
         # Build the API request
         url = f"https://api.{dd_site}/api/v2/spans/events/search"
@@ -244,35 +276,46 @@ class DatadogAPMTracesSearchTool(BaseTool):
 
         try:
             response = requests.post(url, headers=headers, json=body, timeout=30)
+            #print(f"DEBUG: API Response: {response.text}")
             response.raise_for_status()
         except requests.exceptions.HTTPError as e:
-            return (
-                f"ERROR: Datadog API returned HTTP {response.status_code}. "
-                f"Response: {response.text[:500]}"
-            )
+            return _datadog_http_error_message(e.response)
         except requests.exceptions.RequestException as e:
             return f"ERROR: Failed to connect to Datadog API: {str(e)}"
 
         data = response.json()
+        #print(f"DEBUG: API Response Data: {data}")
         logs = data.get("data", [])
+        print(f"DEBUG: API Response Logs length: {len(logs)}")
+        print(f"DEBUG: API Response Logs: {logs}")
+
+
+        if not isinstance(logs, list):
+            return (
+                "ERROR: Unexpected Datadog APM response format. "
+                f"Expected a list under 'data', got {type(logs).__name__}. "
+                f"Response: {json.dumps(data)[:500]}"
+            )
 
         if not logs:
             return (
-                f"No logs found for query '{query}' in the time range '{time_range}' "
+                f"No APM trace found for query '{query}' in the time range '{time_range}' "
                 f"({from_time} to {to_time})."
             )
 
         # Format the results
         results = []
-        results.append(f"=== Datadog Logs Search Results ===")
+        results.append(f"=== Datadog APM Search Results ===")
         results.append(f"Query: {query}")
         results.append(f"Time Range: {from_time} to {to_time}")
         results.append(f"Total Logs Retrieved: {len(logs)}")
         results.append(f"{'=' * 50}\n")
 
         for i, log_entry in enumerate(logs, 1):
-            attrs = log_entry.get("attributes", {})
-            log_attrs = attrs.get("attributes", {})
+            if not isinstance(log_entry, dict):
+                continue
+            attrs = log_entry.get("attributes") or {}
+            log_attrs = (attrs.get("attributes") or {}) if isinstance(attrs, dict) else {}
             http_info = log_attrs.get("http", {})
             error_info = log_attrs.get("error", {})
 

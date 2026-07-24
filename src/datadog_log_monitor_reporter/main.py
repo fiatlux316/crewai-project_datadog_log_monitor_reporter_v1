@@ -11,11 +11,14 @@ def run():
     """
     Run the crew.
     """
+
+    # task.yaml 의 {} 부분에 들어갈 값들을 입력합니다.
     inputs = {
         'datadog_query': 'service:erody-bo-backend-20 status:error',
         'time_range': 'last 1 hour',
         'recipient_email': 'jck@shinsegae.com',
-        'DD_SITE': 'datadoghq.com'
+        #'DD_SITE': 'datadoghq.com',
+        'limit': 5
     }
     DatadogLogMonitorReporterCrew().crew().kickoff(inputs=inputs)
 

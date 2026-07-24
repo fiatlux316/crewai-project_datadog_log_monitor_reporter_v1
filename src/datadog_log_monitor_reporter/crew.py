@@ -22,8 +22,8 @@ class DatadogLogMonitorReporterCrew:
         
         return Agent(
             config=self.agents_config["datadog_log_retrieval_specialist"],
-            #tools=[DatadogLogsSearchTool()],
-            tools=[DatadogAPMTracesSearchTool()],
+            tools=[DatadogLogsSearchTool()],
+            #tools=[DatadogAPMTracesSearchTool()],
             reasoning=False,
             max_reasoning_attempts=None,
             inject_date=True,

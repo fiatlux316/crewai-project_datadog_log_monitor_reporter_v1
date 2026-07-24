@@ -2,9 +2,10 @@
 fetch_datadog_logs:
   description: |-
     Use the Datadog Logs API to fetch application logs matching the query: {datadog_query} over the time range: {time_range}.
-
+    Fetch events  max {limit} logs. Ensure to include timestamps, log levels, messages, service names, and any stack traces in the returned data.
     Construct the API request to the Datadog logs search endpoint:
-    - URL: https://api.{DD_SITE}/api/v2/logs/events/search
+    - APM Trace Endpoint: ~/api/v2/spans/events/search
+    - Log Search Endpoint: ~/api/v2/logs/events/search
     - Use DD_API_KEY and DD_APP_KEY for authentication headers (DD-API-KEY and DD-APPLICATION-KEY).
     - Submit a POST request with the query and time range as body parameters.
     - Return the full raw log data including timestamps, log levels, messages, service names, and any stack traces.
